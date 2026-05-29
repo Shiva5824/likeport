@@ -203,6 +203,10 @@ export async function createPlaylistWithTracks(
 /**
  * Fetch every playlist visible to the current user (owned + followed).
  * Paginates /me/playlists 50 at a time.
+ *
+ * Defensive against the various shapes Spotify can return: null items,
+ * playlists with no images, playlists where the `tracks` field is missing,
+ * and so on. Bad entries are skipped rather than throwing.
  */
 export async function getAllUserPlaylists(
   accessToken: string,
@@ -217,24 +221,31 @@ export async function getAllUserPlaylists(
       accessToken,
       `/me/playlists?limit=${limit}&offset=${offset}`,
     );
-    total = page.total;
-    for (const p of page.items) {
-      if (!p?.id) continue;
-      out.push({
-        id: p.id,
-        name: p.name,
-        description: p.description ?? '',
-        owner: p.owner.display_name ?? p.owner.id,
-        ownerId: p.owner.id,
-        image: p.images?.[0]?.url ?? null,
-        total: p.tracks.total,
-        isPublic: p.public,
-        collaborative: p.collaborative,
-        spotifyUrl: p.external_urls.spotify,
-      });
+    total = typeof page.total === 'number' ? page.total : 0;
+    const items = Array.isArray(page.items) ? page.items : [];
+    for (const p of items) {
+      // Spotify can return `null` items for unavailable/deleted playlists.
+      if (!p || typeof p.id !== 'string') continue;
+      try {
+        out.push({
+          id: p.id,
+          name: typeof p.name === 'string' ? p.name : '(untitled playlist)',
+          description: p.description ?? '',
+          owner: p.owner?.display_name ?? p.owner?.id ?? 'Unknown',
+          ownerId: p.owner?.id ?? '',
+          image: Array.isArray(p.images) ? p.images[0]?.url ?? null : null,
+          total: p.tracks?.total ?? 0,
+          isPublic: typeof p.public === 'boolean' ? p.public : null,
+          collaborative: Boolean(p.collaborative),
+          spotifyUrl: p.external_urls?.spotify ?? '',
+        });
+      } catch {
+        // Skip malformed entries instead of failing the whole request.
+        continue;
+      }
     }
-    offset += page.items.length;
-    if (page.items.length === 0) break;
+    offset += items.length;
+    if (items.length === 0) break;
   }
 
   return out;

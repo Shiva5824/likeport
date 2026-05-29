@@ -27,14 +27,18 @@ export async function GET(): Promise<
     const playlists = await getAllUserPlaylists(session.accessToken);
     return NextResponse.json({ playlists, total: playlists.length });
   } catch (err) {
+    // Log the raw error to Vercel runtime logs so we can diagnose unusual
+    // Spotify responses without exposing internals to the client.
+    console.error('[/api/spotify/playlists] failed:', err);
     if (err instanceof SpotifyApiError) {
       return NextResponse.json<ApiError>(
         { error: err.message, status: err.status },
         { status: err.status },
       );
     }
+    const detail = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json<ApiError>(
-      { error: 'Failed to fetch playlists', status: 500 },
+      { error: `Failed to fetch playlists: ${detail}`, status: 500 },
       { status: 500 },
     );
   }
