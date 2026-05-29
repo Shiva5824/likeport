@@ -100,6 +100,13 @@ export const authConfig: NextAuthConfig = {
         params: {
           scope: SCOPES,
           redirect_uri: getRedirectUri(),
+          // Force Spotify to re-show the consent screen on every sign-in.
+          // Without this, if the user previously authorized the app with a
+          // narrower scope set (e.g. during a misconfigured early run),
+          // Spotify silently reuses that grant and issues tokens missing
+          // scopes like `user-library-read`, causing "Insufficient client
+          // scope" errors at the API.
+          show_dialog: 'true',
         },
       },
       token: {
