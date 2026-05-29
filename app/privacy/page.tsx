@@ -77,6 +77,14 @@ export default function PrivacyPage() {
             <code>user-library-read</code> — to read your saved (liked) tracks.
           </li>
           <li>
+            <code>playlist-read-private</code> — to list your private playlists
+            so you can pick which one to export as CSV.
+          </li>
+          <li>
+            <code>playlist-read-collaborative</code> — to list collaborative
+            playlists you participate in.
+          </li>
+          <li>
             <code>playlist-modify-public</code> — to create public playlists if
             you opt in to that toggle.
           </li>

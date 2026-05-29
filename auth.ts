@@ -19,6 +19,8 @@ import type { SpotifyUser } from '@/types/spotify';
  */
 const SCOPES = [
   'user-library-read',
+  'playlist-read-private',
+  'playlist-read-collaborative',
   'playlist-modify-public',
   'playlist-modify-private',
   'user-read-private',
