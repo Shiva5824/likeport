@@ -25,7 +25,14 @@ export async function GET(): Promise<
 
   try {
     const playlists = await getAllUserPlaylists(session.accessToken);
-    return NextResponse.json({ playlists, total: playlists.length });
+    // Filter out Spotify-owned algorithmic / editorial playlists. As of
+    // April 2024 Spotify restricted /playlists/{id}/tracks for these in
+    // development mode (Discover Weekly, Daily Mixes, Release Radar, etc.),
+    // so even if we showed them in the dropdown we'd 403 on the next call.
+    const accessible = playlists.filter(
+      (p) => p.ownerId.toLowerCase() !== 'spotify',
+    );
+    return NextResponse.json({ playlists: accessible, total: accessible.length });
   } catch (err) {
     // Log the raw error to Vercel runtime logs so we can diagnose unusual
     // Spotify responses without exposing internals to the client.

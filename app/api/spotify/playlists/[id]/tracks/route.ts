@@ -43,6 +43,19 @@ export async function GET(
   } catch (err) {
     console.error('[/api/spotify/playlists/[id]/tracks] failed:', err);
     if (err instanceof SpotifyApiError) {
+      // 403 here usually means the playlist is owned by Spotify (Discover
+      // Weekly, Daily Mix, Release Radar, etc.) and the Web API blocks
+      // reading it from third-party apps. Surface a clearer message.
+      if (err.status === 403) {
+        return NextResponse.json<ApiError>(
+          {
+            error:
+              'This playlist is owned by Spotify (e.g. Discover Weekly, Daily Mix) and the Spotify Web API does not let third-party apps read its tracks. Try one of your own playlists instead.',
+            status: 403,
+          },
+          { status: 403 },
+        );
+      }
       return NextResponse.json<ApiError>(
         { error: err.message, status: err.status },
         { status: err.status },

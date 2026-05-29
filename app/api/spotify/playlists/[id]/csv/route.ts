@@ -76,6 +76,18 @@ export async function GET(_req: Request, ctx: RouteContext): Promise<Response> {
     });
   } catch (err) {
     if (err instanceof SpotifyApiError) {
+      if (err.status === 403) {
+        return new Response(
+          JSON.stringify({
+            error:
+              'This playlist is owned by Spotify (e.g. Discover Weekly, Daily Mix) and the Spotify Web API does not let third-party apps read its tracks.',
+          }),
+          {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
       return new Response(JSON.stringify({ error: err.message }), {
         status: err.status,
         headers: { 'Content-Type': 'application/json' },
