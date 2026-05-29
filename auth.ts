@@ -95,18 +95,16 @@ export const authConfig: NextAuthConfig = {
     Spotify({
       clientId: process.env.SPOTIFY_CLIENT_ID,
       clientSecret: process.env.SPOTIFY_CLIENT_SECRET,
+      // Use the full-URL form for the authorization endpoint so the v5 beta
+      // doesn't overwrite our scope list with the provider's default
+      // (which is just `user-read-email`). show_dialog forces Spotify to
+      // re-prompt for consent so a previously narrower grant can't linger.
       authorization: {
-        url: 'https://accounts.spotify.com/authorize',
+        url: `https://accounts.spotify.com/authorize?scope=${encodeURIComponent(
+          SCOPES,
+        )}&show_dialog=true`,
         params: {
-          scope: SCOPES,
           redirect_uri: getRedirectUri(),
-          // Force Spotify to re-show the consent screen on every sign-in.
-          // Without this, if the user previously authorized the app with a
-          // narrower scope set (e.g. during a misconfigured early run),
-          // Spotify silently reuses that grant and issues tokens missing
-          // scopes like `user-library-read`, causing "Insufficient client
-          // scope" errors at the API.
-          show_dialog: 'true',
         },
       },
       token: {
