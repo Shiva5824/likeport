@@ -14,7 +14,7 @@ import type {
   PlaylistSummary,
   SpotifyMePlaylistsResponse,
   SpotifyPlaylist,
-  SpotifyPlaylistTracksResponse,
+  SpotifyPlaylistItemsResponse,
   SpotifySavedTracksResponse,
   SpotifyTrackRaw,
   SpotifyUser,
@@ -152,12 +152,19 @@ export async function getAllLikedTracks(accessToken: string): Promise<Track[]> {
 /**
  * Create a playlist for the user and add `trackUris` to it.
  *
- * Spotify only allows 100 URIs per add-tracks request, so we chunk.
+ * Uses the post-Feb-2026 endpoints:
+ *   - POST /me/playlists                  (was POST /users/{id}/playlists)
+ *   - POST /playlists/{id}/items          (was POST /playlists/{id}/tracks)
+ *
+ * Spotify still allows 100 URIs per add-items request, so we chunk.
  * Calls are sequential to keep ordering stable and to avoid 429s.
+ *
+ * `userId` is accepted for API back-compat but no longer used — the new
+ * `/me/playlists` endpoint resolves the user from the access token.
  */
 export async function createPlaylistWithTracks(
   accessToken: string,
-  userId: string,
+  _userId: string,
   args: {
     name: string;
     description?: string;
@@ -167,7 +174,7 @@ export async function createPlaylistWithTracks(
 ): Promise<CreatePlaylistResponse> {
   const playlist = await spotifyFetch<SpotifyPlaylist>(
     accessToken,
-    `/users/${encodeURIComponent(userId)}/playlists`,
+    '/me/playlists',
     {
       method: 'POST',
       body: JSON.stringify({
@@ -183,7 +190,7 @@ export async function createPlaylistWithTracks(
     for (const batch of batches) {
       await spotifyFetch<{ snapshot_id: string }>(
         accessToken,
-        `/playlists/${playlist.id}/tracks`,
+        `/playlists/${playlist.id}/items`,
         {
           method: 'POST',
           body: JSON.stringify({ uris: batch }),
@@ -234,7 +241,8 @@ export async function getAllUserPlaylists(
           owner: p.owner?.display_name ?? p.owner?.id ?? 'Unknown',
           ownerId: p.owner?.id ?? '',
           image: Array.isArray(p.images) ? p.images[0]?.url ?? null : null,
-          total: p.tracks?.total ?? 0,
+          // Feb 2026 API rename: tracks -> items. Accept either.
+          total: p.items?.total ?? p.tracks?.total ?? 0,
           isPublic: typeof p.public === 'boolean' ? p.public : null,
           collaborative: Boolean(p.collaborative),
           spotifyUrl: p.external_urls?.spotify ?? '',
@@ -252,13 +260,15 @@ export async function getAllUserPlaylists(
 }
 
 /**
- * Fetch every track of a given playlist by paginating /playlists/{id}/tracks.
+ * Fetch every track of a given playlist by paginating /playlists/{id}/items.
+ *
+ * Spotify renamed `/playlists/{id}/tracks` → `/playlists/{id}/items` in
+ * the February 2026 API change, and renamed the wrapper field `track` →
+ * `item`. We hit the new path and accept either field name in the response
+ * so the helper survives any transitional behavior.
  *
  * Skips local files and episodes, which Spotify can return inside a
  * playlist but which don't have a useful URI for our exports.
- *
- * Defensive against null/partial entries so a single weird item doesn't
- * break the whole fetch.
  */
 export async function getAllPlaylistTracks(
   accessToken: string,
@@ -270,20 +280,18 @@ export async function getAllPlaylistTracks(
   let total = Infinity;
 
   while (offset < total) {
-    // Don't pass a `fields` filter — Spotify's filtered responses sometimes
-    // omit details we need (album images, external_urls) and we'd rather
-    // pay a slightly larger payload than miss data.
-    const page = await spotifyFetch<SpotifyPlaylistTracksResponse>(
+    const page = await spotifyFetch<SpotifyPlaylistItemsResponse>(
       accessToken,
       `/playlists/${encodeURIComponent(
         playlistId,
-      )}/tracks?limit=${limit}&offset=${offset}`,
+      )}/items?limit=${limit}&offset=${offset}`,
     );
     total = typeof page.total === 'number' ? page.total : 0;
     const items = Array.isArray(page.items) ? page.items : [];
 
     for (const item of items) {
-      const t = item?.track;
+      // Feb 2026: wrapper field `track` was renamed `item`. Accept both.
+      const t = item?.item ?? item?.track;
       // Skip null entries, episodes, and local files (no usable URI/id).
       if (!t || typeof t.id !== 'string') continue;
       if (t.type === 'episode') continue;

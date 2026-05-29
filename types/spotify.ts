@@ -79,7 +79,10 @@ export interface SpotifyPlaylistSummary {
   description: string | null;
   owner: { id: string; display_name: string | null };
   images: SpotifyImage[];
-  tracks: { total: number };
+  // After Feb 2026 the field was renamed `items`, but Spotify can still
+  // return the legacy `tracks` field for some endpoints — accept either.
+  items?: { total: number };
+  tracks?: { total: number };
   public: boolean | null;
   collaborative: boolean;
   external_urls: { spotify: string };
@@ -102,6 +105,24 @@ export interface SpotifyPlaylistTracksResponse {
 /** Page envelope for /me/playlists. */
 export interface SpotifyMePlaylistsResponse {
   items: SpotifyPlaylistSummary[];
+  total: number;
+  next: string | null;
+}
+
+/**
+ * Lightweight track-or-item entry returned by the new /playlists/{id}/items
+ * endpoint. The `item` field replaces the old `track` field, but Spotify
+ * still returns `track` for some legacy calls — we accept either.
+ */
+export interface SpotifyPlaylistItem {
+  added_at: string;
+  item?: (SpotifyTrackRaw & { type?: string }) | null;
+  track?: (SpotifyTrackRaw & { type?: string }) | null;
+}
+
+/** Page envelope for /playlists/{id}/items. */
+export interface SpotifyPlaylistItemsResponse {
+  items: SpotifyPlaylistItem[];
   total: number;
   next: string | null;
 }
