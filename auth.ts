@@ -10,8 +10,8 @@
  */
 
 import NextAuth, { type NextAuthConfig } from 'next-auth';
-import Spotify from 'next-auth/providers/spotify';
 import type { JWT } from 'next-auth/jwt';
+import type { SpotifyUser } from '@/types/spotify';
 
 /**
  * The set of scopes our app needs on the user's Spotify account.
@@ -77,40 +77,50 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
 }
 
 /**
- * OAuth redirect URI.
- *
- * On Vercel we derive it from the deployment URL. Locally we fall back to
- * the configured NEXTAUTH_URL. Auth.js will then use the same URI for both
- * the authorize step and the token-exchange step, keeping them consistent.
+ * NextAuth derives the redirect URI from `NEXTAUTH_URL` (which we set in
+ * Vercel to https://likeport.vercel.app). `trustHost: true` makes that
+ * authoritative even if a request arrives with a different Host header.
  */
-function getRedirectUri(): string {
-  const base =
-    process.env.NEXTAUTH_URL ??
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://127.0.0.1:3000');
-  return `${base}/api/auth/callback/spotify`;
-}
-
 export const authConfig: NextAuthConfig = {
   providers: [
-    Spotify({
+    // Custom Spotify OAuth provider. We build the entire provider object
+    // by hand instead of using `Spotify(...)` from next-auth/providers
+    // because the v5 beta's bundled Spotify provider hardcodes
+    // `scope=user-read-email` in its default authorization URL, and any
+    // attempt to override via `params.scope` is ignored by the way
+    // Auth.js merges the two. Defining the provider inline avoids that
+    // bug entirely and gives us full control over the auth + token + userinfo
+    // endpoints.
+    {
+      id: 'spotify',
+      name: 'Spotify',
+      type: 'oauth',
       clientId: process.env.SPOTIFY_CLIENT_ID,
       clientSecret: process.env.SPOTIFY_CLIENT_SECRET,
-      // Use the full-URL form for the authorization endpoint so the v5 beta
-      // doesn't overwrite our scope list with the provider's default
-      // (which is just `user-read-email`). show_dialog forces Spotify to
-      // re-prompt for consent so a previously narrower grant can't linger.
+      // Spotify recommends PKCE; Auth.js handles it automatically when
+      // `checks: ["pkce", "state"]` is set.
+      checks: ['pkce', 'state'],
       authorization: {
-        url: `https://accounts.spotify.com/authorize?scope=${encodeURIComponent(
-          SCOPES,
-        )}&show_dialog=true`,
+        url: 'https://accounts.spotify.com/authorize',
         params: {
-          redirect_uri: getRedirectUri(),
+          scope: SCOPES,
+          // Force Spotify to re-show the consent screen on every sign-in
+          // so we can't end up with a stale, narrower grant.
+          show_dialog: true,
         },
       },
-      token: {
-        url: 'https://accounts.spotify.com/api/token',
+      token: 'https://accounts.spotify.com/api/token',
+      userinfo: 'https://api.spotify.com/v1/me',
+      // Map Spotify's /me payload onto NextAuth's profile shape.
+      profile(profile: SpotifyUser) {
+        return {
+          id: profile.id,
+          name: profile.display_name ?? profile.id,
+          email: profile.email,
+          image: profile.images?.[0]?.url ?? null,
+        };
       },
-    }),
+    },
   ],
   // Trust the host from NEXTAUTH_URL / AUTH_URL even when the request comes
   // in on a different host. Required so the Spotify `redirect_uri` matches
