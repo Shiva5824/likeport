@@ -256,6 +256,9 @@ export async function getAllUserPlaylists(
  *
  * Skips local files and episodes, which Spotify can return inside a
  * playlist but which don't have a useful URI for our exports.
+ *
+ * Defensive against null/partial entries so a single weird item doesn't
+ * break the whole fetch.
  */
 export async function getAllPlaylistTracks(
   accessToken: string,
@@ -266,39 +269,46 @@ export async function getAllPlaylistTracks(
   let offset = 0;
   let total = Infinity;
 
-  // Use `fields` to keep payloads small.
-  const fields =
-    'items(added_at,track(id,name,uri,duration_ms,type,external_urls,artists(name),album(name,images))),total,next';
-
   while (offset < total) {
+    // Don't pass a `fields` filter — Spotify's filtered responses sometimes
+    // omit details we need (album images, external_urls) and we'd rather
+    // pay a slightly larger payload than miss data.
     const page = await spotifyFetch<SpotifyPlaylistTracksResponse>(
       accessToken,
       `/playlists/${encodeURIComponent(
         playlistId,
-      )}/tracks?limit=${limit}&offset=${offset}&fields=${encodeURIComponent(fields)}`,
+      )}/tracks?limit=${limit}&offset=${offset}`,
     );
-    total = page.total;
+    total = typeof page.total === 'number' ? page.total : 0;
+    const items = Array.isArray(page.items) ? page.items : [];
 
-    for (const item of page.items) {
-      const t = item.track;
+    for (const item of items) {
+      const t = item?.track;
       // Skip null entries, episodes, and local files (no usable URI/id).
-      if (!t || !t.id || t.type === 'episode') continue;
+      if (!t || typeof t.id !== 'string') continue;
+      if (t.type === 'episode') continue;
       if (typeof t.uri === 'string' && t.uri.startsWith('spotify:local:')) continue;
-      tracks.push({
-        id: t.id,
-        name: t.name,
-        artists: t.artists.map((a) => a.name),
-        album: t.album.name,
-        albumArt: t.album.images?.[0]?.url ?? null,
-        addedAt: item.added_at,
-        duration_ms: t.duration_ms,
-        uri: t.uri,
-        spotifyUrl: t.external_urls.spotify,
-      });
+      try {
+        tracks.push({
+          id: t.id,
+          name: typeof t.name === 'string' ? t.name : '(unknown track)',
+          artists: Array.isArray(t.artists)
+            ? t.artists.map((a) => a?.name ?? '').filter(Boolean)
+            : [],
+          album: t.album?.name ?? '',
+          albumArt: Array.isArray(t.album?.images) ? t.album.images[0]?.url ?? null : null,
+          addedAt: typeof item.added_at === 'string' ? item.added_at : '',
+          duration_ms: typeof t.duration_ms === 'number' ? t.duration_ms : 0,
+          uri: t.uri ?? `spotify:track:${t.id}`,
+          spotifyUrl: t.external_urls?.spotify ?? `https://open.spotify.com/track/${t.id}`,
+        });
+      } catch {
+        continue;
+      }
     }
 
-    offset += page.items.length;
-    if (page.items.length === 0) break;
+    offset += items.length;
+    if (items.length === 0) break;
   }
 
   return tracks;
