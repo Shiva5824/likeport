@@ -72,6 +72,54 @@ export interface SpotifyPlaylist {
   uri: string;
 }
 
+/** Lightweight playlist summary used in user-playlist listings. */
+export interface SpotifyPlaylistSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  owner: { id: string; display_name: string | null };
+  images: SpotifyImage[];
+  tracks: { total: number };
+  public: boolean | null;
+  collaborative: boolean;
+  external_urls: { spotify: string };
+}
+
+/** Item shape returned by /playlists/{id}/tracks. */
+export interface SpotifyPlaylistTrackItem {
+  added_at: string;
+  // `track` can be null for unavailable items, or an episode (we skip those).
+  track: (SpotifyTrackRaw & { type?: string }) | null;
+}
+
+/** Page envelope for /playlists/{id}/tracks. */
+export interface SpotifyPlaylistTracksResponse {
+  items: SpotifyPlaylistTrackItem[];
+  total: number;
+  next: string | null;
+}
+
+/** Page envelope for /me/playlists. */
+export interface SpotifyMePlaylistsResponse {
+  items: SpotifyPlaylistSummary[];
+  total: number;
+  next: string | null;
+}
+
+/** App-level playlist summary returned to the frontend. */
+export interface PlaylistSummary {
+  id: string;
+  name: string;
+  description: string;
+  owner: string;
+  ownerId: string;
+  image: string | null;
+  total: number;
+  isPublic: boolean | null;
+  collaborative: boolean;
+  spotifyUrl: string;
+}
+
 /**
  * Normalized track representation used by the frontend and CSV export.
  * Every API consumer in the app accepts this shape, never the raw Spotify one.
@@ -108,4 +156,36 @@ export interface CreatePlaylistBody {
   description?: string;
   trackUris: string[];
   isPublic: boolean;
+}
+
+/** A row parsed from a user-uploaded CSV. */
+export interface CsvRow {
+  /** Original line index (1-based, excluding header) for error reporting. */
+  rowIndex: number;
+  title: string;
+  artist: string;
+  album: string;
+  /** May be a Spotify URL (track / open.spotify.com / spotify:track:...) or empty. */
+  spotifyUrl: string;
+}
+
+/** Per-row import outcome returned to the client. */
+export interface ImportRowResult {
+  rowIndex: number;
+  title: string;
+  artist: string;
+  /** Resulting Spotify track URI if matched, else null. */
+  uri: string | null;
+  /** How the URI was found: 'url' (parsed from CSV), 'search' (Spotify search), or 'missed'. */
+  via: 'url' | 'search' | 'missed';
+  /** Optional human-readable reason when not matched. */
+  note?: string;
+}
+
+/** Response from POST /api/spotify/import-csv. */
+export interface ImportCsvResponse {
+  playlist: CreatePlaylistResponse;
+  matched: number;
+  missed: number;
+  results: ImportRowResult[];
 }

@@ -4,13 +4,24 @@
  * Main dashboard UI.
  *
  * On mount it fetches every liked song through our /api/spotify/liked-songs
- * route and renders four export cards plus a virtualized song list.
+ * route and renders:
+ *   - Liked-songs export cards (export all, last 30 days, split by artist, CSV)
+ *   - Playlist tools (export any playlist as CSV, import CSV as a playlist)
+ *   - A virtualized list of liked songs
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { signIn } from 'next-auth/react';
 import SongList from '@/components/SongList';
 import ExportCard from '@/components/ExportCard';
 import { useToast } from '@/components/Toast';
+import {
+  PrimaryButton,
+  SecondaryButton,
+  PublicToggle,
+  CreatedLink,
+} from '@/components/dashboard/primitives';
+import PlaylistExportCard from '@/components/dashboard/PlaylistExportCard';
+import ImportCsvCard from '@/components/dashboard/ImportCsvCard';
 import type {
   ApiError,
   CreatePlaylistResponse,
@@ -139,15 +150,13 @@ export default function DashboardClient() {
 
       {state === 'ready' && tracks.length > 0 && (
         <>
-          <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-            <CardExportAll
-              tracks={tracks}
-              createPlaylist={createPlaylist}
-            />
-            <CardLast30
-              tracks={last30}
-              createPlaylist={createPlaylist}
-            />
+          <SectionHeader
+            title="From your Liked Songs"
+            subtitle="Turn your liked tracks into playlists or export them."
+          />
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+            <CardExportAll tracks={tracks} createPlaylist={createPlaylist} />
+            <CardLast30 tracks={last30} createPlaylist={createPlaylist} />
             <CardByArtist
               artists={artists}
               tracksByArtist={tracksByArtist}
@@ -156,7 +165,17 @@ export default function DashboardClient() {
             <CardCsv />
           </div>
 
-          <h2 className="mt-10 mb-3 text-sm font-semibold text-zinc-300">
+          <SectionHeader
+            title="Playlist tools"
+            subtitle="Export any playlist as a CSV, or upload one to recreate a playlist on Spotify."
+            className="mt-12"
+          />
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+            <PlaylistExportCard />
+            <ImportCsvCard />
+          </div>
+
+          <h2 className="mt-12 mb-3 text-sm font-semibold text-zinc-300">
             Your liked songs
           </h2>
           <SongList tracks={tracks} />
@@ -184,6 +203,23 @@ function Hero({ state, total }: { state: LoadState; total: number }) {
   );
 }
 
+function SectionHeader({
+  title,
+  subtitle,
+  className = '',
+}: {
+  title: string;
+  subtitle: string;
+  className?: string;
+}) {
+  return (
+    <div className={`mt-8 ${className}`}>
+      <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
+      <p className="mt-1 text-sm text-zinc-400">{subtitle}</p>
+    </div>
+  );
+}
+
 function EmptyState() {
   return (
     <div className="mt-10 rounded-2xl border border-border bg-card p-10 text-center">
@@ -191,6 +227,10 @@ function EmptyState() {
       <p className="mt-2 text-sm text-zinc-400">
         Open Spotify, tap the heart on a track, then come back here.
       </p>
+      <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+        <PlaylistExportCard />
+        <ImportCsvCard />
+      </div>
     </div>
   );
 }
@@ -215,7 +255,7 @@ function SkeletonGrid() {
   );
 }
 
-/* ---------- Cards ---------- */
+/* ---------- Liked-songs cards ---------- */
 
 function CardExportAll({
   tracks,
@@ -245,7 +285,7 @@ function CardExportAll({
       name.trim(),
       isPublic,
       tracks.map((t) => t.uri),
-      'Created with LikedToPlaylist',
+      'Created with LikePort',
     );
     setSubmitting(false);
     if (res) {
@@ -306,7 +346,7 @@ function CardLast30({
       name.trim() || `Liked — Last 30 days (${todayStamp()})`,
       isPublic,
       tracks.map((t) => t.uri),
-      'Last 30 days, exported with LikedToPlaylist',
+      'Last 30 days, exported with LikePort',
     );
     setSubmitting(false);
     if (res) {
@@ -492,87 +532,12 @@ function CardCsv() {
 
   return (
     <ExportCard
-      title="Export to CSV"
+      title="Liked songs as CSV"
       description="Download every liked song as a spreadsheet (Title, Artist, Album, Date, Duration, URL)."
     >
       <PrimaryButton onClick={onDownload} disabled={downloading}>
         {downloading ? 'Preparing…' : 'Download CSV'}
       </PrimaryButton>
     </ExportCard>
-  );
-}
-
-/* ---------- Small UI primitives ---------- */
-
-function PrimaryButton({
-  children,
-  ...rest
-}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
-    <button
-      {...rest}
-      className="inline-flex items-center justify-center rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-black transition hover:bg-accentHover disabled:cursor-not-allowed disabled:opacity-60"
-    >
-      {children}
-    </button>
-  );
-}
-
-function SecondaryButton({
-  children,
-  ...rest
-}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
-    <button
-      {...rest}
-      className="inline-flex items-center justify-center rounded-lg border border-border bg-bg px-4 py-2 text-sm font-semibold text-zinc-200 transition hover:border-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
-    >
-      {children}
-    </button>
-  );
-}
-
-function PublicToggle({
-  isPublic,
-  onChange,
-}: {
-  isPublic: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <label className="flex cursor-pointer items-center justify-between rounded-lg border border-border bg-bg px-3 py-2 text-sm">
-      <span>{isPublic ? 'Public playlist' : 'Private playlist'}</span>
-      <span
-        className={`relative inline-block h-5 w-9 rounded-full transition ${
-          isPublic ? 'bg-accent' : 'bg-zinc-700'
-        }`}
-        aria-hidden
-      >
-        <span
-          className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition ${
-            isPublic ? 'translate-x-4' : ''
-          }`}
-        />
-      </span>
-      <input
-        type="checkbox"
-        className="sr-only"
-        checked={isPublic}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-    </label>
-  );
-}
-
-function CreatedLink({ result }: { result: CreatePlaylistResponse }) {
-  return (
-    <a
-      href={result.url}
-      target="_blank"
-      rel="noreferrer"
-      className="block truncate rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-sm text-accent hover:bg-accent/20"
-    >
-      Open “{result.name}” in Spotify ↗
-    </a>
   );
 }

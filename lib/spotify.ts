@@ -11,8 +11,12 @@
 
 import type {
   CreatePlaylistResponse,
+  PlaylistSummary,
+  SpotifyMePlaylistsResponse,
   SpotifyPlaylist,
+  SpotifyPlaylistTracksResponse,
   SpotifySavedTracksResponse,
+  SpotifyTrackRaw,
   SpotifyUser,
   Track,
 } from '@/types/spotify';
@@ -194,4 +198,186 @@ export async function createPlaylistWithTracks(
     url: playlist.external_urls.spotify,
     trackCount: args.trackUris.length,
   };
+}
+
+/**
+ * Fetch every playlist visible to the current user (owned + followed).
+ * Paginates /me/playlists 50 at a time.
+ */
+export async function getAllUserPlaylists(
+  accessToken: string,
+): Promise<PlaylistSummary[]> {
+  const out: PlaylistSummary[] = [];
+  const limit = 50;
+  let offset = 0;
+  let total = Infinity;
+
+  while (offset < total) {
+    const page = await spotifyFetch<SpotifyMePlaylistsResponse>(
+      accessToken,
+      `/me/playlists?limit=${limit}&offset=${offset}`,
+    );
+    total = page.total;
+    for (const p of page.items) {
+      if (!p?.id) continue;
+      out.push({
+        id: p.id,
+        name: p.name,
+        description: p.description ?? '',
+        owner: p.owner.display_name ?? p.owner.id,
+        ownerId: p.owner.id,
+        image: p.images?.[0]?.url ?? null,
+        total: p.tracks.total,
+        isPublic: p.public,
+        collaborative: p.collaborative,
+        spotifyUrl: p.external_urls.spotify,
+      });
+    }
+    offset += page.items.length;
+    if (page.items.length === 0) break;
+  }
+
+  return out;
+}
+
+/**
+ * Fetch every track of a given playlist by paginating /playlists/{id}/tracks.
+ *
+ * Skips local files and episodes, which Spotify can return inside a
+ * playlist but which don't have a useful URI for our exports.
+ */
+export async function getAllPlaylistTracks(
+  accessToken: string,
+  playlistId: string,
+): Promise<Track[]> {
+  const tracks: Track[] = [];
+  const limit = 100;
+  let offset = 0;
+  let total = Infinity;
+
+  // Use `fields` to keep payloads small.
+  const fields =
+    'items(added_at,track(id,name,uri,duration_ms,type,external_urls,artists(name),album(name,images))),total,next';
+
+  while (offset < total) {
+    const page = await spotifyFetch<SpotifyPlaylistTracksResponse>(
+      accessToken,
+      `/playlists/${encodeURIComponent(
+        playlistId,
+      )}/tracks?limit=${limit}&offset=${offset}&fields=${encodeURIComponent(fields)}`,
+    );
+    total = page.total;
+
+    for (const item of page.items) {
+      const t = item.track;
+      // Skip null entries, episodes, and local files (no usable URI/id).
+      if (!t || !t.id || t.type === 'episode') continue;
+      if (typeof t.uri === 'string' && t.uri.startsWith('spotify:local:')) continue;
+      tracks.push({
+        id: t.id,
+        name: t.name,
+        artists: t.artists.map((a) => a.name),
+        album: t.album.name,
+        albumArt: t.album.images?.[0]?.url ?? null,
+        addedAt: item.added_at,
+        duration_ms: t.duration_ms,
+        uri: t.uri,
+        spotifyUrl: t.external_urls.spotify,
+      });
+    }
+
+    offset += page.items.length;
+    if (page.items.length === 0) break;
+  }
+
+  return tracks;
+}
+
+/**
+ * Extract a Spotify track id from a string. Accepts:
+ *   - https://open.spotify.com/track/{id}[?si=...]
+ *   - http://open.spotify.com/track/{id}
+ *   - spotify:track:{id}
+ *   - bare 22-char base62 id
+ *
+ * Returns null if no track id is recognized.
+ */
+export function parseSpotifyTrackId(input: string): string | null {
+  const s = input.trim();
+  if (!s) return null;
+
+  // URI form: spotify:track:abc...
+  const uriMatch = s.match(/^spotify:track:([A-Za-z0-9]{22})$/);
+  if (uriMatch) return uriMatch[1];
+
+  // Open URL: open.spotify.com/track/abc... or with embed/intl-xx prefixes
+  const urlMatch = s.match(
+    /https?:\/\/open\.spotify\.com\/(?:[a-z-]+\/)*track\/([A-Za-z0-9]{22})/,
+  );
+  if (urlMatch) return urlMatch[1];
+
+  // Bare id
+  if (/^[A-Za-z0-9]{22}$/.test(s)) return s;
+  return null;
+}
+
+/**
+ * Look up a single track by its id. Returns null on 404 (track removed).
+ */
+export async function getTrackById(
+  accessToken: string,
+  trackId: string,
+): Promise<SpotifyTrackRaw | null> {
+  try {
+    return await spotifyFetch<SpotifyTrackRaw>(
+      accessToken,
+      `/tracks/${encodeURIComponent(trackId)}`,
+    );
+  } catch (err) {
+    if (err instanceof SpotifyApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+/**
+ * Search Spotify for the best-matching track given a title and artist.
+ *
+ * We construct a query using Spotify's field filters (`track:` + `artist:`)
+ * which are dramatically more accurate than free-text queries, and fall
+ * back to a free-text query if the structured one misses.
+ */
+export async function searchTrack(
+  accessToken: string,
+  args: { title: string; artist?: string; album?: string },
+): Promise<SpotifyTrackRaw | null> {
+  const title = args.title.trim();
+  if (!title) return null;
+  // Use the first listed artist if multiple are comma-separated.
+  const primaryArtist = (args.artist ?? '').split(/[,;/]| feat\.| ft\./i)[0]?.trim();
+
+  function buildQuery(structured: boolean): string {
+    if (structured) {
+      const parts = [`track:${quote(title)}`];
+      if (primaryArtist) parts.push(`artist:${quote(primaryArtist)}`);
+      return parts.join(' ');
+    }
+    return [title, primaryArtist].filter(Boolean).join(' ');
+  }
+
+  for (const structured of [true, false]) {
+    const q = buildQuery(structured);
+    const res = await spotifyFetch<{
+      tracks: { items: SpotifyTrackRaw[] };
+    }>(
+      accessToken,
+      `/search?type=track&limit=5&q=${encodeURIComponent(q)}`,
+    );
+    if (res.tracks.items.length > 0) return res.tracks.items[0];
+  }
+  return null;
+}
+
+/** Quote a search query fragment so spaces don't break field filters. */
+function quote(s: string): string {
+  return s.includes(' ') ? `"${s.replace(/"/g, '')}"` : s;
 }
